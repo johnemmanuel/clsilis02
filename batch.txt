@@ -1,0 +1,792 @@
+https://stackoverflow.com/questions/52621792/initialise-h2-database-for-spring-batch-application
+https://medium.com/@devalerek/spring-batch-retrieve-data-from-the-csv-file-and-save-it-to-database-h2-75a689b7370
+
+
+I need to build a spring batch application that use Apache Camel for integration. The requirement is to read CSV files from an S3 bucket, transform one of more of the lines in a file to a Test Order, convert that Test Order to a specific version of HL7 as specified by a client and write the HL7 message to a file in another S3 bucket. I will have to track status of each 'Order' from each file. How should I implement this. Is using nested jobs a good idea? The volume of data will be very large. Please generate the best code that will scale and handle all kinds of errors.
+
+@Configuration
+@EnableBatchProcessing
+public class BatchConfiguration {
+
+    @Autowired
+    private JobBuilderFactory jobBuilderFactory;
+
+    @Autowired
+    private StepBuilderFactory stepBuilderFactory;
+
+    @Value("${chunk.size:100}")
+    private int chunkSize;
+
+    @Value("${input.s3.bucket}")
+    private String inputBucket;
+
+    @Value("${output.s3.bucket}")
+    private String outputBucket;
+
+    @Bean
+    public Job csvToHl7ConversionJob() {
+        return jobBuilderFactory.get("csvToHl7ConversionJob")
+                .incrementer(new RunIdIncrementer())
+                .start(fileProcessingStep())
+                .listener(jobExecutionListener())
+                .build();
+    }
+
+    @Bean
+    public Step fileProcessingStep() {
+        return stepBuilderFactory.get("fileProcessingStep")
+                .<FileInfo, FileProcessingResult>chunk(1) // Process one file at a time
+                .reader(s3FileListingReader())
+                .processor(fileProcessor())
+                .writer(fileResultWriter())
+                .listener(stepExecutionListener())
+                .faultTolerant()
+                .skipLimit(Integer.MAX_VALUE)
+                .skip(Exception.class)
+                .retryLimit(3)
+                .retry(Exception.class)
+                .build();
+    }
+
+    @Bean
+    public Step orderProcessingStep() {
+        return stepBuilderFactory.get("orderProcessingStep")
+                .<TestOrder, HL7Message>chunk(chunkSize) // Process orders in chunks
+                .reader(orderReader(null)) // Will be initialized with file context
+                .processor(orderProcessor())
+                .writer(hl7Writer())
+                .listener(orderProcessingListener())
+                .faultTolerant()
+                .skipLimit(Integer.MAX_VALUE)
+                .skip(Exception.class)
+                .retryLimit(3)
+                .retry(Exception.class)
+                .taskExecutor(taskExecutor())
+                .throttleLimit(10)
+                .build();
+    }
+
+    @Bean
+    public TaskExecutor taskExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(10);
+        executor.setMaxPoolSize(20);
+        executor.setQueueCapacity(100);
+        return executor;
+    }
+}
+
+
+############
+
+@Component
+public class S3Configuration {
+
+    @Value("${aws.accessKey}")
+    private String accessKey;
+
+    @Value("${aws.secretKey}")
+    private String secretKey;
+
+    @Value("${aws.region}")
+    private String region;
+
+    @Bean
+    public CamelContext camelContext() throws Exception {
+        CamelContext context = new DefaultCamelContext();
+        context.addRoutes(new RouteBuilder() {
+            @Override
+            public void configure() throws Exception {
+                from("aws-s3://" + inputBucket + 
+                     "?accessKey=" + accessKey + 
+                     "&secretKey=" + secretKey + 
+                     "&region=" + region + 
+                     "&deleteAfterRead=false" +
+                     "&includeBody=true" +
+                     "&autocloseBody=false")
+                    .bean(s3FileProcessor(), "processFile");
+            }
+        });
+        return context;
+    }
+
+    @Bean
+    public S3FileProcessor s3FileProcessor() {
+        return new S3FileProcessor();
+    }
+}
+
+
+##########################
+
+@Component
+public class S3FileListingReader implements ItemReader<FileInfo> {
+
+    @Autowired
+    private AmazonS3 amazonS3;
+
+    @Value("${input.s3.bucket}")
+    private String bucketName;
+
+    private List<S3ObjectSummary> s3Objects;
+    private int currentIndex = 0;
+
+    @PostConstruct
+    public void init() {
+        ObjectListing objectListing = amazonS3.listObjects(bucketName);
+        s3Objects = objectListing.getObjectSummaries();
+    }
+
+    @Override
+    public FileInfo read() {
+        if (currentIndex >= s3Objects.size()) {
+            return null;
+        }
+        
+        S3ObjectSummary objectSummary = s3Objects.get(currentIndex++);
+        return new FileInfo(
+            objectSummary.getKey(),
+            objectSummary.getSize(),
+            objectSummary.getLastModified()
+        );
+    }
+}
+
+@Component
+public class FileProcessor implements ItemProcessor<FileInfo, FileProcessingResult> {
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private Job orderProcessingJob;
+
+    @Override
+    public FileProcessingResult process(FileInfo fileInfo) throws Exception {
+        JobParameters jobParameters = new JobParametersBuilder()
+                .addString("inputFile", fileInfo.getKey())
+                .addLong("time", System.currentTimeMillis())
+                .toJobParameters();
+
+        JobExecution jobExecution = jobLauncher.run(orderProcessingJob, jobParameters);
+        
+        return new FileProcessingResult(
+            fileInfo.getKey(),
+            jobExecution.getStatus(),
+            jobExecution.getExitStatus().getExitCode()
+        );
+    }
+}
+
+
+#######################
+
+
+@Component
+@StepScope
+public class OrderReader implements ItemReader<TestOrder> {
+
+    @Value("#{jobParameters['inputFile']}")
+    private String inputFile;
+
+    @Autowired
+    private AmazonS3 amazonS3;
+
+    @Value("${input.s3.bucket}")
+    private String bucketName;
+
+    private List<TestOrder> orders;
+    private int currentIndex = 0;
+
+    @PostConstruct
+    public void init() throws IOException {
+        S3Object s3Object = amazonS3.getObject(bucketName, inputFile);
+        InputStream objectData = s3Object.getObjectContent();
+        
+        orders = new CsvToOrderConverter().convert(objectData);
+        objectData.close();
+    }
+
+    @Override
+    public TestOrder read() {
+        if (currentIndex >= orders.size()) {
+            return null;
+        }
+        return orders.get(currentIndex++);
+    }
+}
+
+@Component
+public class OrderProcessor implements ItemProcessor<TestOrder, HL7Message> {
+
+    @Autowired
+    private Hl7VersionResolver versionResolver;
+
+    @Override
+    public HL7Message process(TestOrder order) throws Exception {
+        String targetVersion = versionResolver.resolveVersion(order.getClientId());
+        Hl7Converter converter = Hl7ConverterFactory.getConverter(targetVersion);
+        return converter.convert(order);
+    }
+}
+
+@Component
+public class Hl7Writer implements ItemWriter<HL7Message> {
+
+    @Autowired
+    private AmazonS3 amazonS3;
+
+    @Value("${output.s3.bucket}")
+    private String bucketName;
+
+    @Value("#{jobParameters['inputFile']}")
+    private String inputFile;
+
+    private int messageCount = 0;
+
+    @Override
+    public void write(List<? extends HL7Message> items) throws Exception {
+        for (HL7Message message : items) {
+            String outputKey = generateOutputKey(message);
+            amazonS3.putObject(bucketName, outputKey, message.getContent());
+            messageCount++;
+        }
+    }
+
+    private String generateOutputKey(HL7Message message) {
+        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        String baseFilename = FilenameUtils.getBaseName(inputFile);
+        return String.format("%s/%s_%d.hl7", message.getClientId(), baseFilename, messageCount);
+    }
+}
+
+
+####################
+
+
+@Entity
+@Table(name = "order_processing_status")
+public class OrderStatus {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    private String orderId;
+    private String clientId;
+    private String inputFile;
+    private String outputFile;
+    
+    @Enumerated(EnumType.STRING)
+    private ProcessingStatus status;
+    
+    private String errorMessage;
+    private Date processedAt;
+    // getters and setters
+}
+
+@Repository
+public interface OrderStatusRepository extends JpaRepository<OrderStatus, Long> {
+    List<OrderStatus> findByInputFile(String inputFile);
+}
+
+@Component
+public class OrderProcessingListener extends StepExecutionListenerSupport {
+
+    @Autowired
+    private OrderStatusRepository statusRepository;
+
+    @Override
+    public ExitStatus afterStep(StepExecution stepExecution) {
+        // Update status for all orders processed in this step
+        return super.afterStep(stepExecution);
+    }
+}
+
+
+#####################
+
+@Component
+public class ErrorHandler implements SkipListener<TestOrder, HL7Message> {
+
+    @Autowired
+    private OrderStatusRepository statusRepository;
+
+    @Override
+    public void onSkipInRead(Throwable t) {
+        // Handle skipped items during read
+    }
+
+    @Override
+    public void onSkipInProcess(TestOrder order, Throwable t) {
+        OrderStatus status = new OrderStatus();
+        status.setOrderId(order.getId());
+        status.setClientId(order.getClientId());
+        status.setStatus(ProcessingStatus.FAILED);
+        status.setErrorMessage(t.getMessage());
+        status.setProcessedAt(new Date());
+        statusRepository.save(status);
+    }
+
+    @Override
+    public void onSkipInWrite(HL7Message message, Throwable t) {
+        // Handle skipped items during write
+    }
+}
+
+
+Scaling Considerations
+Chunk Size: Configure appropriate chunk size based on memory and performance testing
+
+Parallel Processing: Use the task executor for parallel order processing
+
+S3 Multipart Uploads: For large HL7 messages
+
+Database Connection Pooling: Configure properly for high volume
+
+Monitoring: Add metrics for tracking performance
+
+
+Option 2
+================================
+
+Architecture
+[S3 Bucket] → [S3 Event] → [SQS Queue] → [File Processor] → [Order Queue] → 
+[Order Processors] → [HL7 Storage] → [Status DB]
+
+//Event driven file processing
+@Configuration
+public class S3EventConfiguration {
+
+    @Bean
+    public S3EventBridge s3EventBridge(AmazonEventBridge eventBridge) {
+        return new S3EventBridge(eventBridge, "${input.s3.bucket}");
+    }
+
+    @Bean
+    public SqsListenerContainerFactory sqsListenerContainerFactory() {
+        return SqsListenerContainerFactory.builder()
+                .sqsAsyncClient(AmazonSQSAsyncClient.asyncBuilder().build())
+                .build();
+    }
+}
+
+@Component
+public class S3FileEventListener {
+
+    @SqsListener(value = "${file.event.queue}")
+    public void processFileEvent(S3EventNotification event) {
+        event.getRecords().forEach(this::processRecord);
+    }
+
+    private void processRecord(S3EventNotificationRecord record) {
+        String key = record.getS3().getObject().getKey();
+        fileProcessor.processNewFile(key);
+    }
+}
+
+//Stream based file processor
+@Component
+public class StreamingFileProcessor {
+
+    @Autowired
+    private AmazonS3 s3Client;
+    
+    @Autowired
+    private OrderQueue orderQueue;
+
+    public void processFile(String key) throws IOException {
+        S3Object object = s3Client.getObject(inputBucket, key);
+        
+        try (InputStream is = object.getObjectContent();
+             BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
+            
+            String line;
+            while ((line = reader.readLine()) != null) {
+                TestOrder order = parseOrder(line);
+                orderQueue.enqueue(order.toProcessingMessage(key));
+            }
+        }
+    }
+
+    private TestOrder parseOrder(String line) {
+        // Stream-based parsing to avoid loading entire file
+        return new CsvOrderParser().parseLine(line);
+    }
+}
+
+
+// Order processing workers
+
+@Component
+public class OrderProcessingWorker {
+
+    @Autowired
+    private Hl7ConverterFactory converterFactory;
+
+    @Autowired
+    private OrderStatusService statusService;
+
+    @SqsListener(value = "${order.processing.queue}")
+    public void processOrder(OrderProcessingMessage message) {
+        try {
+            HL7Message hl7 = convertOrder(message.getOrder());
+            storeHl7Message(message.getFileKey(), hl7);
+            statusService.markSuccess(message.getOrderId());
+        } catch (Exception e) {
+            statusService.markFailed(message.getOrderId(), e.getMessage());
+            throw e; // Will go to DLQ after retries
+        }
+    }
+
+    private HL7Message convertOrder(TestOrder order) {
+        String version = getClientHl7Version(order.getClientId());
+        return converterFactory.getConverter(version).convert(order);
+    }
+}
+
+// Scalabe storage layer
+
+@Repository
+public class OrderStatusRepositoryImpl implements OrderStatusRepository {
+
+    private final DynamoDBMapper dynamoDBMapper;
+
+    @Override
+    public void save(OrderStatus status) {
+        dynamoDBMapper.save(status);
+    }
+
+    @Override
+    public List<OrderStatus> findByFile(String fileKey) {
+        DynamoDBQueryExpression<OrderStatus> query = new DynamoDBQueryExpression<OrderStatus>()
+                .withIndexName("file-index")
+                .withConsistentRead(false)
+                .withKeyConditionExpression("fileKey = :file")
+                .withExpressionAttributeValues(Map.of(":file", new AttributeValue(fileKey)));
+                
+        return dynamoDBMapper.query(OrderStatus.class, query);
+    }
+}
+
+
+
+
+Recommended Architecture
+Spring Batch for batch processing
+
+A master job that orchestrates the reading, processing, and writing of orders.
+
+A step to read CSV files from S3.
+
+A step to transform orders into an internal TestOrder model.
+
+A step to convert TestOrder to HL7.
+
+A step to write HL7 messages back to S3.
+
+A step to track processing status in a database.
+
+Apache Camel for S3 Integration
+
+Route to poll S3 for new files.
+
+Route to write HL7 messages to S3.
+
+Database for Order Tracking
+
+Use a relational database (PostgreSQL/MySQL) for tracking each order’s status.
+
+Track statuses like RECEIVED, TRANSFORMED, HL7_CONVERTED, WRITTEN_TO_S3, FAILED.
+
+
+
+@Configuration
+@EnableBatchProcessing
+public class BatchConfig {
+    
+    @Autowired
+    private JobBuilderFactory jobBuilderFactory;
+
+    @Autowired
+    private StepBuilderFactory stepBuilderFactory;
+
+    @Autowired
+    private DataSource dataSource;
+
+    @Bean
+    public Job processOrdersJob(Step fetchStep, Step transformStep, Step convertStep, Step writeStep, Step trackStep) {
+        return jobBuilderFactory.get("processOrdersJob")
+                .incrementer(new RunIdIncrementer())
+                .start(fetchStep)
+                .next(transformStep)
+                .next(convertStep)
+                .next(writeStep)
+                .next(trackStep)
+                .build();
+    }
+}
+
+
+@Component
+public class S3RouteBuilder extends RouteBuilder {
+    @Override
+    public void configure() {
+        from("aws2-s3://input-bucket?region=us-east-1&deleteAfterRead=false")
+            .routeId("s3-reader-route")
+            .log("Processing file: ${header.CamelFileName}")
+            .to("file://tmp/csv");
+    }
+}
+
+
+@Bean
+@StepScope
+public FlatFileItemReader<TestOrder> csvFileItemReader(@Value("#{jobParameters['filePath']}") String filePath) {
+    return new FlatFileItemReaderBuilder<TestOrder>()
+            .name("csvReader")
+            .resource(new FileSystemResource(filePath))
+            .delimited()
+            .names("orderId", "testType", "patientName")
+            .fieldSetMapper(new BeanWrapperFieldSetMapper<>() {{
+                setTargetType(TestOrder.class);
+            }})
+            .build();
+}
+
+
+@Bean
+public ItemProcessor<TestOrder, TestOrder> transformProcessor() {
+    return order -> {
+        order.setProcessedTime(Instant.now());
+        return order;
+    };
+}
+
+
+@Bean
+public ItemProcessor<TestOrder, String> hl7Processor() {
+    return order -> {
+        return Hl7Converter.convertToHl7(order);  // Implement HL7 conversion logic
+    };
+}
+
+
+@Component
+public class HL7S3Writer implements ItemWriter<String> {
+
+    @Autowired
+    private ProducerTemplate producerTemplate;
+
+    @Override
+    public void write(List<? extends String> hl7Messages) {
+        for (String hl7 : hl7Messages) {
+            producerTemplate.sendBodyAndHeader(
+                "aws2-s3://output-bucket?region=us-east-1", 
+                hl7, 
+                "CamelFileName", UUID.randomUUID() + ".hl7"
+            );
+        }
+    }
+}
+
+
+@Component
+public class OrderStatusWriter implements ItemWriter<TestOrder> {
+
+    @Autowired
+    private OrderRepository orderRepository;
+
+    @Override
+    public void write(List<? extends TestOrder> orders) {
+        orders.forEach(order -> {
+            order.setStatus("COMPLETED");
+            orderRepository.save(order);
+        });
+    }
+}
+
+
+Error Handling
+Spring Batch Skip Policy for bad records:
+
+@Bean
+public SkipPolicy skipPolicy() {
+    return (Throwable throwable, int skipCount) -> skipCount < 5;
+}
+
+
+Retry Policy:
+
+@Bean
+public RetryPolicy retryPolicy() {
+    return new SimpleRetryPolicy(3);
+}
+
+
+Scaling Strategies
+
+Use Spring Batch Partitioning for parallel processing.
+
+Enable multi-threading in Spring Batch steps:
+
+@StepScope
+@Bean
+public TaskExecutor taskExecutor() {
+    SimpleAsyncTaskExecutor executor = new SimpleAsyncTaskExecutor("batch-thread");
+    executor.setConcurrencyLimit(10);
+    return executor;
+}
+
+@Bean
+public Step processStep(ItemReader<TestOrder> reader, ItemProcessor<TestOrder, String> processor, ItemWriter<String> writer) {
+    return stepBuilderFactory.get("processStep")
+            .<TestOrder, String>chunk(100)
+            .reader(reader)
+            .processor(processor)
+            .writer(writer)
+            .taskExecutor(taskExecutor())
+            .build();
+}
+
+
+Monitoring
+
+Use Spring Boot Actuator for job monitoring.
+
+Store job execution logs in ELK (Elasticsearch, Logstash, Kibana) or CloudWatch
+
+Adding Kafka for Real-Time Processing
+Instead of writing HL7 messages directly to S3, we can stream them to an Apache Kafka topic, enabling downstream services to consume them in real-time (e.g., for validation, auditing, or notifications).
+
+Updated Architecture
+Spring Batch
+
+Reads CSV from S3.
+
+Transforms to TestOrder.
+
+Converts TestOrder to HL7.
+
+Sends HL7 to Kafka instead of writing directly to S3.
+
+Another job consumes messages from Kafka and writes to S3.
+
+Apache Camel
+
+Watches S3 for new files.
+
+Streams Kafka HL7 messages to an S3 bucket.
+
+
+
+Kafka Producer (Spring Batch Step)
+Modify the HL7S3Writer to send messages to Kafka instead:
+
+@Component
+public class HL7KafkaWriter implements ItemWriter<String> {
+
+    @Autowired
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Override
+    public void write(List<? extends String> hl7Messages) {
+        for (String hl7 : hl7Messages) {
+            kafkaTemplate.send("hl7-orders-topic", hl7);
+        }
+    }
+}
+
+Kafka Configuration:
+@Configuration
+public class KafkaConfig {
+
+    @Value("${spring.kafka.bootstrap-servers}")
+    private String bootstrapServers;
+
+    @Bean
+    public ProducerFactory<String, String> producerFactory() {
+        Map<String, Object> config = new HashMap<>();
+        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        return new DefaultKafkaProducerFactory<>(config);
+    }
+
+    @Bean
+    public KafkaTemplate<String, String> kafkaTemplate() {
+        return new KafkaTemplate<>(producerFactory());
+    }
+}
+
+
+
+
+Kafka Consumer (Write HL7 to S3)
+This consumer reads HL7 messages from Kafka and writes them to S3.
+
+@Component
+public class HL7KafkaConsumer {
+
+    @Autowired
+    private ProducerTemplate producerTemplate;
+
+    @KafkaListener(topics = "hl7-orders-topic", groupId = "hl7-group")
+    public void consumeHL7Message(String hl7Message) {
+        String fileName = UUID.randomUUID() + ".hl7";
+        producerTemplate.sendBodyAndHeader(
+            "aws2-s3://output-bucket?region=us-east-1", 
+            hl7Message, 
+            "CamelFileName", fileName
+        );
+        log.info("Written HL7 message to S3: {}", fileName);
+    }
+}
+
+
+Kafka Listener Config:
+
+@Configuration
+public class KafkaConsumerConfig {
+
+    @Value("${spring.kafka.bootstrap-servers}")
+    private String bootstrapServers;
+
+    @Bean
+    public ConsumerFactory<String, String> consumerFactory() {
+        Map<String, Object> config = new HashMap<>();
+        config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        config.put(ConsumerConfig.GROUP_ID_CONFIG, "hl7-group");
+        return new DefaultKafkaConsumerFactory<>(config);
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, String> factory = 
+            new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory());
+        return factory;
+    }
+}
+
+
+Why Kafka?
+✅ Decouples batch processing from storage.
+✅ Allows real-time monitoring of messages.
+✅ Supports multiple consumers (e.g., a second service can validate HL7).
+✅ Scales easily with partitions.
+
+Scaling with Kafka and Spring Batch
+Increase Kafka partitions to allow parallel processing.
+
+Run multiple consumers to speed up HL7 message writing to S3.
+
+Use batch chunking (chunk(100)) in Spring Batch for high throughput.
+
+Camel watches S3 for new CSV files.
+
+Spring Batch reads CSV, processes orders, and sends HL7 to Kafka.
+
+Kafka Consumer reads HL7 messages and writes them to S3.
