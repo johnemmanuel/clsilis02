@@ -790,3 +790,92 @@ Camel watches S3 for new CSV files.
 Spring Batch reads CSV, processes orders, and sends HL7 to Kafka.
 
 Kafka Consumer reads HL7 messages and writes them to S3.
+
+
+<dependency>
+  <groupId>ca.uhn.hapi</groupId>
+  <artifactId>hapi-base</artifactId>
+  <version>2.3</version>
+</dependency>
+
+import ca.uhn.hl7v2.HL7Exception;
+import ca.uhn.hl7v2.model.Message;
+import ca.uhn.hl7v2.model.v251.message.ORM_O01;
+import ca.uhn.hl7v2.model.v251.message.ORU_R01;
+import ca.uhn.hl7v2.parser.PipeParser;
+
+public class Hl7ToCanonicalMapper {
+
+    private static final PipeParser parser = new PipeParser();
+
+    public static CanonicalHL7Message map(String hl7Message) throws HL7Exception {
+        Message message = parser.parse(hl7Message);
+        String messageType = message.getMSH().getMessageType().getMessageCode().getValue();
+        String triggerEvent = message.getMSH().getMessageType().getTriggerEvent().getValue();
+        String typeCode = messageType + "_" + triggerEvent;
+
+        CanonicalHL7Message canonical = new CanonicalHL7Message();
+        canonical.setMessageType(MessageType.valueOf(typeCode));
+        canonical.setHeader(Hl7SegmentMapper.mapHeader(message.getMSH()));
+
+        if (message instanceof ORM_O01 orm) {
+            canonical.setPatient(Hl7SegmentMapper.mapPatient(orm.getPATIENT().getPID()));
+            canonical.getOrders().add(Hl7SegmentMapper.mapOrder(orm.getORDER().getORC(), orm.getORDER().getOBR()));
+        } else if (message instanceof ORU_R01 oru) {
+            canonical.setPatient(Hl7SegmentMapper.mapPatient(oru.getPATIENT_RESULT().getPATIENT().getPID()));
+            canonical.getOrders().add(Hl7SegmentMapper.mapOrder(oru.getPATIENT_RESULT().getORDER_OBSERVATION().getORC(),
+                                                                 oru.getPATIENT_RESULT().getORDER_OBSERVATION().getOBR()));
+            oru.getPATIENT_RESULT().getORDER_OBSERVATION().getOBSERVATIONAll().forEach(obs -> {
+                canonical.getResults().add(Hl7SegmentMapper.mapResult(obs.getOBX()));
+            });
+        }
+
+        return canonical;
+    }
+}
+
+public class Hl7SegmentMapper {
+
+    public static MessageHeader mapHeader(MSH msh) throws HL7Exception {
+        MessageHeader header = new MessageHeader();
+        header.setSendingApp(msh.getSendingApplication().getNamespaceID().getValue());
+        header.setSendingFacility(msh.getSendingFacility().getNamespaceID().getValue());
+        header.setReceivingApp(msh.getReceivingApplication().getNamespaceID().getValue());
+        header.setReceivingFacility(msh.getReceivingFacility().getNamespaceID().getValue());
+        header.setMessageControlId(msh.getMessageControlID().getValue());
+        header.setTimestamp(msh.getDateTimeOfMessage().getTime().getValue());
+        return header;
+    }
+
+    public static Patient mapPatient(PID pid) throws HL7Exception {
+        Patient patient = new Patient();
+        patient.setId(pid.getPatientIdentifierList(0).getIDNumber().getValue());
+        patient.setLastName(pid.getPatientName(0).getFamilyName().getSurname().getValue());
+        patient.setFirstName(pid.getPatientName(0).getGivenName().getValue());
+        patient.setBirthDate(pid.getDateTimeOfBirth().getTime().getValue());
+        patient.setSex(pid.getAdministrativeSex().getValue());
+        return patient;
+    }
+
+    public static Order mapOrder(ORC orc, OBR obr) throws HL7Exception {
+        Order order = new Order();
+        order.setOrderId(orc.getPlacerOrderNumber().getEntityIdentifier().getValue());
+        order.setOrderControl(orc.getOrderControl().getValue());
+        order.setUniversalServiceId(obr.getUniversalServiceIdentifier().getText().getValue());
+        order.setOrderDateTime(obr.getObservationDateTime().getTime().getValue());
+        return order;
+    }
+
+    public static Result mapResult(OBX obx) throws HL7Exception {
+        Result result = new Result();
+        result.setObservationId(obx.getObservationIdentifier().getText().getValue());
+        result.setValue(obx.getObservationValue(0).encode());
+        result.setUnits(obx.getUnits().getText().getValue());
+        result.setReferenceRange(obx.getReferencesRange().getValue());
+        result.setAbnormalFlags(obx.getAbnormalFlags(0).getValue());
+        result.setObservationDateTime(obx.getDateTimeOfTheObservation().getTime().getValue());
+        return result;
+    }
+}
+
+
