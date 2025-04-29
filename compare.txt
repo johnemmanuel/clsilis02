@@ -153,3 +153,55 @@ S3 Glacier and S3 Glacier Deep Archive Retrieval Options
 https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-glacier.html
 
 Would you like a sample lifecycle policy JSON to apply to one of your buckets?
+
+
+AWS S3 Lifecycle Policy — JSON Format (for AWS Console, CLI, SDK)
+
+{
+  "Rules": [
+    {
+      "ID": "Transition-Standard-IA-Glacier-DeepArchive",
+      "Prefix": "",
+      "Status": "Enabled",
+      "Transitions": [
+        {
+          "Days": 30,
+          "StorageClass": "STANDARD_IA"
+        },
+        {
+          "Days": 90,
+          "StorageClass": "GLACIER_IR"  // Glacier Instant Retrieval
+        },
+        {
+          "Days": 180,
+          "StorageClass": "GLACIER"     // Glacier Flexible Retrieval
+        },
+        {
+          "Days": 365,
+          "StorageClass": "DEEP_ARCHIVE"
+        }
+      ],
+      "Expiration": {
+        "Days": 1825  // Optional: expire after 5 years (adjust as needed)
+      }
+    }
+  ]
+}
+
+
+Key points:
+
+After 30 days, move to STANDARD_IA.
+
+After 90 days, move to GLACIER Instant Retrieval.
+
+After 180 days, move to Glacier Flexible Retrieval.
+
+After 365 days, move to Deep Archive.
+
+Optionally delete objects after 5 years (1825 days).
+
+
+aws s3api put-bucket-lifecycle-configuration \
+  --bucket YOUR_BUCKET_NAME \
+  --lifecycle-configuration file://lifecycle.json
