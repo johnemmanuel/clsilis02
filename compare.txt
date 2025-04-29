@@ -1,0 +1,155 @@
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+---------------------------------------------+
+| Storage Class        | Min Storage Dur.  | Min Billable Dur. | Retrieval Latency     | Retrieval Cost ($/GB)   | Storage Cost ($/GB/mo)   | Use Case Summary           | Lifecycle Strategy                             |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+---------------------------------------------+
+| STANDARD             | None              | None              | Milliseconds          | $0.000                   | $0.023                    | Frequently accessed data   | Default; no lifecycle needed unless archiving |
+|                      |                   |                   |                        |                          |                           | (e.g., active documents)   | or cleanup required                            |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+---------------------------------------------+
+| INTELLIGENT_TIERING  | 30 days           | 30 days           | Milliseconds          | $0.000                   | $0.023 (frequent)         | Unknown access patterns    | Enable automatic tiering; no custom policy     |
+|                      |                   |                   |                        |                          | ~$0.0125 (infrequent)     | (auto moves data)          | required unless deleting old data              |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+---------------------------------------------+
+| STANDARD_IA          | 30 days           | 30 days           | Milliseconds          | ~$0.01                   | $0.0125                   | Infrequently accessed data | Move from STANDARD after 30–60 days            |
+|                      |                   |                   |                        |                          |                           | (e.g., backups, older logs)| with a lifecycle rule                         |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+---------------------------------------------+
+| ONEZONE_IA           | 30 days           | 30 days           | Milliseconds          | ~$0.01                   | $0.01                     | Re-creatable low-access    | Use only if region failure is tolerable        |
+|                      |                   |                   |                        |                          |                           | (e.g., cache, temp data)   | Lifecycle rule after 30–90 days                |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+---------------------------------------------+
+| GLACIER INSTANT      | 90 days           | 90 days           | Milliseconds          | ~$0.03                   | $0.004                    | Archive w/ fast access     | Archive after 90+ days from IA                 |
+| RETRIEVAL            |                   |                   |                        |                          |                           | (e.g., legal docs)         |                                               |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+---------------------------------------------+
+| GLACIER FLEXIBLE     | 90 days           | 90 days           | Minutes to hours       | ~$0.01 to $0.03          | $0.0036                   | Deep archive w/ rare access| Transition from GLACIER IR after 6–12 months   |
+| RETRIEVAL            |                   |                   |                        |                          |                           | (e.g., audits)             |                                               |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+---------------------------------------------+
+| GLACIER DEEP ARCHIVE | 180 days          | 180 days          | 12 hours (standard)    | ~$0.02 to $0.03          | $0.00099                  | Compliance/long-term data | Final transition stage after 1+ years          |
+|                      |                   |                   |                        |                          |                           | (e.g., records, video)     |                                               |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+---------------------------------------------+
+
+
+Best Practices for Lifecycle Strategy
+Tagging Strategy: Use object tags to apply different rules to different object types in the same bucket.
+
+Prefix-based Lifecycle: Organize by prefixes (logs/, raw/, processed/) to control transition per directory.
+
+Delete Expired Data: Use expiration rules to delete temporary or obsolete files automatically.
+
+Data Access Pattern Analysis: Use S3 Storage Lens and AWS Cost Explorer to tune lifecycle rules.
+
+Transition Schedule (Example):
+
+STANDARD → STANDARD_IA (after 30 days)
+
+STANDARD_IA → GLACIER INSTANT (after 60–90 days)
+
+GLACIER INSTANT → GLACIER FLEX (after 180 days)
+
+GLACIER FLEX → DEEP ARCHIVE (after 365+ days)
+
+
+
+ Optimized S3 Storage Class Lifecycle Comparison Grid (For Your Use Case)
+
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+------------------------------+-----------------------------------------------+
+| Storage Class        | Min Storage Dur.  | Min Billable Dur. | Retrieval Latency     | Retrieval Cost ($/GB)   | Storage Cost ($/GB/mo)   | Best for Files               | Suggested Transition Rule                     |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+------------------------------+-----------------------------------------------+
+| STANDARD             | None              | None              | Milliseconds          | $0.000                   | $0.023                    | Recent uploads, shared docs  | Use for first 30–60 days                      |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+------------------------------+-----------------------------------------------+
+| INTELLIGENT_TIERING  | 30 days           | 30 days           | Milliseconds          | $0.000                   | $0.023 (frequent)         | Mixed/unknown access pattern | Use if object access is unpredictable          |
+|                      |                   |                   |                        |                          | ~$0.0125 (infrequent)     |                              | Auto transition included                       |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+------------------------------+-----------------------------------------------+
+| STANDARD_IA          | 30 days           | 30 days           | Milliseconds          | ~$0.01                   | $0.0125                   | Archived or rare access docs | Transition from STANDARD at 30–60 days        |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+------------------------------+-----------------------------------------------+
+| GLACIER INSTANT      | 90 days           | 90 days           | Milliseconds          | ~$0.03                   | $0.004                    | Legal, audit, compliance docs| Transition from IA after 90+ days              |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+------------------------------+-----------------------------------------------+
+| GLACIER FLEX         | 90 days           | 90 days           | Minutes to hours       | ~$0.01 to $0.03          | $0.0036                   | Deep archive (rarely needed) | Transition after 6–12 months                  |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+------------------------------+-----------------------------------------------+
+| DEEP ARCHIVE         | 180 days          | 180 days          | ~12 hours              | ~$0.02 to $0.03          | $0.00099                  | Regulatorily retained files  | Final stage for files >1 year old              |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+------------------------------+-----------------------------------------------+
+
+
+Lifecycle Strategy Example (Recommended)
+For all buckets storing these file types:
+
+STANDARD (0–30 days): Keep recently uploaded files in STANDARD.
+
+STANDARD_IA (30–90 days): Move to IA if files are not updated/accessed.
+
+GLACIER INSTANT (90–180 days): Retain medium-term for compliance, search.
+
+GLACIER FLEXIBLE or DEEP ARCHIVE (>180 days): Long-term retention for regulatory, legal, or backup compliance.
+
+Delete or Retain: Apply Expiration rules for files not needed beyond a fixed retention period.
+
+You can apply lifecycle policies using:
+
+Prefixes (e.g., /uploads/, /legal/)
+
+Tags (e.g., {"retention":"long_term"})
+
+
+ Sources (Latest as of April 2025)
+These references are directly from AWS documentation:
+
+Amazon S3 Storage Classes – AWS Documentation (Latest)
+
+S3 Lifecycle Configuration – AWS Docs
+
+S3 Pricing (US-East and Global)
+
+S3 Glacier – AWS Docs
+
+S3 Intelligent-Tiering Overview
+
+S3 Lifecycle Examples
+
+
+
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+----------------------------------------------------------+
+| Storage Class        | Min Storage Dur.  | Min Billable Dur. | Retrieval Latency     | Retrieval Cost ($/GB)   | Storage Cost ($/GB/mo)   | Best for                   | Suggested Lifecycle Use                                     |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+----------------------------------------------------------+
+| STANDARD             | None              | None              | Milliseconds          | $0.000                   | $0.023                    | New uploads, frequently    | Use at upload. Keep for 30–60 days before transition.     |
+|                      |                   |                   |                        |                          |                           | accessed user files        |                                                            |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+----------------------------------------------------------+
+| INTELLIGENT_TIERING  | 30 days           | 30 days           | Milliseconds          | $0.000                   | $0.023 → ~$0.0125         | Unpredictable access files | Use if access pattern is unclear. Auto-tiering is ideal.  |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+----------------------------------------------------------+
+| STANDARD_IA          | 30 days           | 30 days           | Milliseconds          | ~$0.01                   | $0.0125                   | Infrequent downloads       | Transition after 30–60 days of inactivity.                |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+----------------------------------------------------------+
+| GLACIER INSTANT      | 90 days           | 90 days           | Milliseconds          | ~$0.03                   | $0.004                    | Archived but quick-recall  | Transition after 90–180 days if retrieval must be fast.   |
+| RETRIEVAL            |                   |                   |                        |                          |                           | (e.g., financial docs)     |                                                            |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+----------------------------------------------------------+
+| GLACIER FLEX RETR.   | 90 days           | 90 days           | Minutes to hours       | ~$0.01–$0.03             | $0.0036                   | Rarely accessed archives   | Transition after 6–12 months. Use if retrieval time is OK.|
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+----------------------------------------------------------+
+| GLACIER DEEP ARCHIVE | 180 days          | 180 days          | ~12 hours              | ~$0.02–$0.03             | $0.00099                  | Legal, compliance data     | Final transition after 1 year. For long-term retention.   |
++----------------------+-------------------+-------------------+------------------------+--------------------------+---------------------------+----------------------------+----------------------------------------------------------+
+
+
+Recommended Lifecycle Strategy (Simplified)
+For your files:
+
+Initial upload → STANDARD
+
+After 30 days → transition to STANDARD_IA
+
+After 180 days → transition to GLACIER INSTANT RETRIEVAL or GLACIER FLEX
+
+After 1 year (if legal/archive need) → transition to GLACIER DEEP ARCHIVE
+
+Optionally add a delete rule after N years (e.g., 7 years for compliance)
+
+This gives you a balance of accessibility, cost savings, and retrieval flexibility.
+
+
+Sources (as of April 2025):
+The following sources were referenced and verified as current as of April 2025 using AWS official documentation:
+
+AWS S3 Pricing
+https://aws.amazon.com/s3/pricing/
+
+Amazon S3 Storage Classes Overview
+https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html
+
+S3 Lifecycle Configuration Rules
+https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-configuration-examples.html
+
+S3 Glacier and S3 Glacier Deep Archive Retrieval Options
+https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-glacier.html
+
+Would you like a sample lifecycle policy JSON to apply to one of your buckets?
