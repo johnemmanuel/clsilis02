@@ -74,3 +74,140 @@ In the main method:
 Create a Dog and Bird.
 
 Call their makeSound() and move() methods.
+
+
+ Class - Constructors and Overloading
+Problem:
+Create a Book class with properties:
+
+title (String)
+
+author (String)
+
+price (double)
+
+Add:
+
+A default constructor.
+
+A constructor to initialize all properties.
+
+A method to display book details.
+
+A method applyDiscount(double percentage) to reduce the price.
+
+Create multiple Book objects using different constructors and apply a discount.
+
+6. Interface - Multiple Interfaces
+Problem:
+Create two interfaces:
+
+Flyable with method fly()
+
+Swimmable with method swim()
+
+Create a class Duck that implements both interfaces.
+Create another class Airplane that implements only Flyable.
+
+Write a program that calls fly() and swim() based on the object.
+
+7. Abstract Class - Template Method Pattern
+Problem:
+Create an abstract class Meal with:
+
+A method prepareMeal() that calls steps:
+
+prepareIngredients() (abstract)
+
+cook() (abstract)
+
+eat() (concrete method: print "Enjoy your meal!")
+
+Create two classes PastaMeal and SaladMeal that define their own way of preparing ingredients and cooking.
+
+Demonstrate meal preparation for both in a main() method.
+
+8. Class and Interface - Polymorphism Practice
+Problem:
+Create an interface Payment with method pay(double amount).
+
+Implement two classes:
+
+CreditCardPayment
+
+CashPayment
+
+Each should provide a different implementation of pay().
+In main(), create a list of Payment references and call pay() polymorphically for each.
+
+9. Abstract Class - Bank Example
+Problem:
+Create an abstract class BankAccount with:
+
+Properties: accountNumber, balance
+
+Abstract method: void withdraw(double amount)
+
+Concrete method: void deposit(double amount)
+
+Create two subclasses:
+
+SavingsAccount
+
+CurrentAccount
+
+Implement withdraw() with different withdrawal rules (e.g., no overdraft for Savings, limited overdraft for Current).
+
+10. Interface - Real World Simulation
+Problem:
+Create an interface RemoteControl with methods:
+
+turnOn()
+
+turnOff()
+
+changeChannel(int channel)
+
+Implement TV and Projector classes that behave differently for these methods.
+
+Write a driver program to simulate using the remote control.
+
+11. Abstract Class with Constructor and Fields
+Problem:
+Create an abstract class Employee with:
+
+name (String)
+
+salary (double)
+
+Constructor to initialize name and salary.
+
+Abstract method calculateBonus()
+
+Create two classes:
+
+Manager
+
+Developer
+
+Each should calculate a different bonus (e.g., 20% salary for Manager, 10% for Developer).
+
+Display bonus amounts for each employee.
+
+12. Interface + Abstract Class Combo
+Problem:
+Create an interface Eatable with method eat().
+
+Create an abstract class Fruit with:
+
+name property
+
+Abstract method taste()
+
+Create two classes:
+
+Apple and Mango
+
+Both extend Fruit and implement Eatable.
+
+Demonstrate polymorphism where you call eat() and taste().
