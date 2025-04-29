@@ -1,0 +1,76 @@
+Class - Basic Problem
+Problem:
+Create a class called Car with the following properties:
+
+brand (String)
+
+year (int)
+
+speed (int)
+
+Add methods to:
+
+Accelerate (increase speed)
+
+Brake (decrease speed)
+
+Display the car details.
+
+Write a main method to create a Car object, modify its speed, and display its details.
+
+2. Interface - Basic Problem
+Problem:
+Define an interface called Playable with these methods:
+
+play()
+
+pause()
+
+stop()
+
+Create two classes, MusicPlayer and VideoPlayer, that implement the Playable interface differently.
+
+In the main method, create objects of both classes and call their methods.
+
+3. Abstract Class - Basic Problem
+Problem:
+Create an abstract class Shape with:
+
+An abstract method double area()
+
+An abstract method double perimeter()
+
+A method void displayInfo() that prints "This is a shape."
+
+Then:
+
+Create concrete classes Circle and Rectangle that extend Shape.
+
+Implement the area() and perimeter() methods in each class.
+
+Write a main method that creates a Circle and a Rectangle, and displays their area and perimeter.
+
+4. Combined Practice - Class, Interface, Abstract Class
+Problem:
+
+Create an interface Movable with method move().
+
+Create an abstract class Animal with:
+
+Property name
+
+Abstract method makeSound()
+
+Create classes Dog and Bird that:
+
+Extend Animal
+
+Implement Movable
+
+Implement makeSound() and move() in both classes differently.
+
+In the main method:
+
+Create a Dog and Bird.
+
+Call their makeSound() and move() methods.
