@@ -879,3 +879,127 @@ public class Hl7SegmentMapper {
 }
 
 
+
+
+
+public class MessageBuilder {
+
+    private final String version;
+    private final String messageType;
+    private final List<SegmentBuilder> segmentBuilders = new ArrayList<>();
+
+    public MessageBuilder(String version, String messageType) {
+        this.version = version;
+        this.messageType = messageType;
+    }
+
+    public MessageBuilder addSegmentBuilder(SegmentBuilder segmentBuilder) {
+        this.segmentBuilders.add(segmentBuilder);
+        return this;
+    }
+
+    public Message build(Object canonicalModel) throws HL7Exception {
+        // Create an empty message of the correct type and version
+        ModelClassFactory factory = new DefaultModelClassFactory();
+        Message message = MessageAdapters.createMessage(version, messageType, factory);
+
+        for (SegmentBuilder segmentBuilder : segmentBuilders) {
+            Segment segment = segmentBuilder.buildSegment(canonicalModel, message);
+            message.addNonstandardSegment(segment.getName(), segment);
+        }
+
+        return message;
+    }
+}
+
+
+public interface SegmentBuilder {
+    Segment buildSegment(Object canonicalModel, Message parentMessage) throws HL7Exception;
+}
+
+
+public class MappingConfig {
+    private String sourceFieldName;
+    private String targetHl7Field; // Example: "PID-2-1"
+    
+    // getters, setters
+}
+
+
+public class MappingSegmentBuilder implements SegmentBuilder {
+
+    private final String segmentName;
+    private final List<MappingConfig> mappings;
+
+    public MappingSegmentBuilder(String segmentName, List<MappingConfig> mappings) {
+        this.segmentName = segmentName;
+        this.mappings = mappings;
+    }
+
+    @Override
+    public Segment buildSegment(Object canonicalModel, Message parentMessage) throws HL7Exception {
+        Segment segment = (Segment) parentMessage.get(segmentName);
+
+        for (MappingConfig mapping : mappings) {
+            String value = readValueFromSource(canonicalModel, mapping.getSourceFieldName());
+            setValueInSegment(segment, mapping.getTargetHl7Field(), value);
+        }
+
+        return segment;
+    }
+
+    private String readValueFromSource(Object canonicalModel, String sourceField) {
+        // Use reflection or a Mapper interface
+        // Example reflection way:
+        try {
+            Field field = canonicalModel.getClass().getDeclaredField(sourceField);
+            field.setAccessible(true);
+            Object val = field.get(canonicalModel);
+            return val != null ? val.toString() : null;
+        } catch (Exception e) {
+            throw new RuntimeException("Error reading source field " + sourceField, e);
+        }
+    }
+
+    private void setValueInSegment(Segment segment, String hl7Path, String value) throws HL7Exception {
+        String[] parts = hl7Path.split("-");
+        int fieldNum = Integer.parseInt(parts[1]);
+        int componentNum = parts.length > 2 ? Integer.parseInt(parts[2]) : 1;
+
+        Type field = segment.getField(fieldNum, 0);
+        if (field instanceof Composite) {
+            Type component = ((Composite) field).getComponent(componentNum - 1);
+            if (component instanceof Primitive) {
+                ((Primitive) component).setValue(value);
+            }
+        } else if (field instanceof Primitive) {
+            ((Primitive) field).setValue(value);
+        }
+    }
+}
+
+
+public class CanonicalModel {
+    private String access_1;
+    private String patientName;
+    // etc.
+}
+
+
+List<MappingConfig> pidMappings = List.of(
+    new MappingConfig("access_1", "PID-2-1"),
+    new MappingConfig("patientName", "PID-5-1")
+);
+
+SegmentBuilder pidBuilder = new MappingSegmentBuilder("PID", pidMappings);
+
+MessageBuilder builder = new MessageBuilder("2.5.1", "ORU^R01")
+    .addSegmentBuilder(pidBuilder);
+
+CanonicalModel canonicalModel = new CanonicalModel();
+canonicalModel.setAccess_1("123456");
+canonicalModel.setPatientName("Doe^John");
+
+Message message = builder.build(canonicalModel);
+
+System.out.println(new PipeParser().encode(message));
