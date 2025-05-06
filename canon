@@ -1,0 +1,352 @@
+Here's my canonical model.
+
+public class CanonicalHL7 {
+
+  private MessageType messageType;
+
+  /** MSH */
+  private MessageHeader header;
+
+  /** SFT */
+  private Software software;
+
+  /** PID */
+  private Patient patient;
+
+  /** ORC */
+  private List<Order> orders;
+
+  private Map<String, Object> extensions;
+}
+
+/** Contains only supported message types */
+public enum MessageType {
+  /** Results report */
+  ORU_R01,
+  /** Acknowledgement */
+  ACK,
+  /** CUSTOM */
+  CUSTOM,
+  /** Unknown */
+  UNKNOWN
+}
+
+public class MessageHeader {
+
+  /** MSH-1 */
+  private String fieldSeparator = "|";
+
+  /** MSH-2 */
+  private String encodingCharacters = "^~\\&\n";
+
+  /** MSH-3 */
+  private String sendingApplication;
+
+  /** MSH-4 */
+  private String sendingFacility;
+
+  /** MSH-5 */
+  private String receivingApplication;
+
+  /** MSH-6 */
+  private String receivingFacility;
+
+  /** MSH-7 */
+  private LocalDateTime dateTimeOfMessage;
+
+  /** MSH-9 */
+  private MessageType messageType;
+
+  /** MSH-10 */
+  private String messageControlId;
+
+  /** MSH-11 */
+  private String processingId;
+
+  /** MSH-12 */
+  private String version;
+}
+
+
+public class Software {
+
+  /** SFT 1 */
+  private String vendorOrgnaization;
+
+  /** SFT 2 */
+  private String certifiedVersionOrRelease;
+
+  /** SFT 3 */
+  private String productName;
+
+  /** SFT 4 */
+  private String binaryID;
+
+  /** SFT 5 */
+  private String productInformation;
+
+  /** SFT 6 */
+  private String installDate;
+}
+
+public class Patient {
+
+  /** PID-1 */
+  private String id = "1";
+
+  /** PID-3.1 */
+  private String patientIdentifierList;
+
+  /** PID-5 */
+  private String patientName;
+
+  /** PID-7 */
+  private LocalDate dateTimeOfBirth;
+
+  /** For CDC age in OBX under PID */
+  private String age;
+
+  /** PID-8 */
+  private String gender;
+
+  /** PID-11 */
+  private Address address;
+
+  /** PID-13 : Home */
+  private String homePhoneNumber;
+
+  /** PID-14 */
+  private String businessPhoneNumber;
+
+  private Map<String, Object> additionalIdentifiers;
+
+  private List<Note> notes;
+}
+
+public class Order {
+
+    /**
+     * ORC-1
+     */
+  private String orderControl;
+
+    /**
+     * ORC-3
+     */
+  private String fillerOrderNumber;
+
+    /**
+     * ORC-13(.4.2)
+     */
+  private String enterersLocation;
+
+    /**
+     * ORC-21
+     */
+  private String orderingFacilityName;
+
+    /**
+     * ORC-24
+     */
+  private Address orderingFacilityAddress;
+
+
+  private Specimen specimen;
+
+  private List<ObservationRequest> requests;
+
+  private List<Note> notes;
+
+}
+
+public class Specimen {
+
+  /** SPM-1 */
+  private String id;
+
+  /** SPM-2 */
+  private String specimenId;
+
+  /** SPM-4.2 */
+  private String specimenType;
+
+  /** */
+  private LocalDateTime collectionDateTime;
+
+  /** OBR 14.1 */
+  private LocalDateTime receivedDateTime;
+
+  private String collectorId;
+
+  /** SPM-8 */
+  private String collectionSite;
+}
+
+public class ObservationRequest {
+
+  /** OBR-1 Set ID */
+  private String id;
+
+  /** OBR-3 Filler order number */
+  private String fillerOrderNumber;
+
+  /** OBR-4.1 UniversalServiceIdentifier - LocalCode */
+  private String localCode;
+
+  /** ORB-4.2 UniversalServiceIdentifier - TestName */
+  private String testName;
+
+  /** OBR-4.4 */
+  private String alternativeIdentifier;
+
+  /** OBR-4.5 */
+  private String alternateText;
+
+  /** OBR-6 */
+  private LocalDateTime requestedDateTime;
+
+  /** OBR-7 */
+  private LocalDateTime observationDateTime;
+
+  /** OBR-13 OBR-16 */
+  private OrderingProvider orderingProvider;
+
+  /** OBR-31.1 */
+  private String reasonForStudy;
+
+  private List<Note> notes;
+
+  /** OBX */
+  private List<ObservationResult> results;
+}
+
+public class ObservationResult {
+
+  /** OBX-1 SETID */
+  private String id;
+
+  /** OBX-2 */
+  private String valueType;
+
+  /** OBX-3.1 */
+  private String observationIdentifier;
+
+  /** OBX-3.2 */
+  private String text;
+
+  /** OBX-3.4 */
+  private String alternateIdentifier;
+
+  /** OBX-5 */
+  private List<String> observationValues;
+
+  /** OBX-5.1 */
+  private String observationValue;
+
+  /** OBX-6 */
+  private String units;
+
+  /** OBX-7 */
+  private String referenceRange;
+
+  /** OBX-14 */
+  private LocalDateTime observationDateTime;
+
+  /** OBX-15 */
+  private String producersID;
+
+  private List<Note> notes;
+}
+
+public class Note {
+
+
+    /**
+     * NTE-2
+     */
+    private String sourceOfComment;
+    /**
+     * NTE-3
+     */
+    private String comment;
+
+}
+
+Here's my source mapping
+
+@Entity
+@Table(name = "conversion_configuration")
+public class ConversionConfiguration {
+
+  @Id
+  @GeneratedValue(strategy = GenerationType.UUID)
+  @Column(name = "id")
+  private UUID id;
+
+  @Column(name = "configuration_code")
+  private String configurationCode;
+
+  @Column(name = "hl7_version")
+  private String hl7Version;
+
+  @Column(name = "hl7_message_type")
+  private HL7MessageType hl7MessageType;
+
+  @OneToMany(mappedBy = "configuration", cascade = CascadeType.DETACH)
+  private List<SourceMapping> sourceMappings;
+
+  @ManyToOne private Client client;
+
+  public ConversionConfiguration() {}
+
+}
+
+@Entity
+@Table(name = "source_mappings")
+public class SourceMapping extends AbstractAuditingEntity<UUID> {
+
+  @Id
+  @GeneratedValue(strategy = GenerationType.UUID)
+  @Column(name = "id")
+  private UUID id;
+
+  @Column(name = "source_column_name")
+  private String sourceColumnName;
+
+  @Column(name = "hl7_segment_name")
+  private String hl7SegmentID;
+
+  @Column(name = "hl7_field_name")
+  private String hl7FieldName;
+
+  @ManyToOne(fetch = FetchType.LAZY)
+  private ConversionConfiguration configuration;
+}
+
+My source is a CSV (sourceColumnName in SourceMapping.java represents one col in the CSV)
+
+@Entity
+@Table(
+    name = "file_data",
+    indexes = {@Index(name = "idx_accession_facts_pk", columnList = "accession_facts_pk")})
+public class CsvRecord {
+
+  @Id
+  @GeneratedValue(strategy = GenerationType.UUID)
+  @Column(name = "id")
+  private UUID id;
+
+  @Column(name = "request_id", columnDefinition = "varchar(64)")
+  private String requestId;
+
+  @Lob
+  @Convert(converter = MapToJsonConverter.class)
+  private Map<String, String> columnData;
+
+  @Column(name = "accession_facts_pk")
+  private String accessionFactsPk;
+}
+
+List<CsvRecord> will become one CanonicalHL7 (multiple rows in csv are grouped by accessionFactsPk)
+
+Generate code for a mapper from List<CsvRecord> to CanonicalHL7.
