@@ -350,3 +350,28 @@ public class CsvRecord {
 List<CsvRecord> will become one CanonicalHL7 (multiple rows in csv are grouped by accessionFactsPk)
 
 Generate code for a mapper from List<CsvRecord> to CanonicalHL7.
+
+
+
+
+=======================================================================================================
+public interface SegmentBuilder {
+    void build(CanonicalHL7 source, Message message);
+}
+
+
+public abstract class AbstractSegmentBuilder implements SegmentBuilder {
+    protected SegmentBuilder next;
+
+    public AbstractSegmentBuilder(SegmentBuilder next) {
+        this.next = next;
+    }
+
+    @Override
+    public void build(CanonicalHL7 source, Message message) {
+        buildSegment(source, message);
+        if (next != null) next.build(source, message);
+    }
+
+    protected abstract void buildSegment(CanonicalHL7 source, Message message);
+}
