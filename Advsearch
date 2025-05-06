@@ -1,0 +1,119 @@
+{
+  "filter": {
+    "or": [
+      {
+        "and": [
+          { "field": "name", "value": "invoice", "operator": "eq" },
+          { "field": "class identifier", "value": "financial", "operator": "eq" }
+        ]
+      },
+      {
+        "and": [
+          { "field": "tags.project", "value": "alpha", "operator": "eq" },
+          { "field": "tags.status", "value": "approved", "operator": "eq" }
+        ]
+      }
+    ]
+  }
+}
+
+public class FilterRequest {
+    private FilterExpression filter;
+
+    // getters and setters
+}
+
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type", visible = true)
+@JsonSubTypes({
+    @JsonSubTypes.Type(value = AndExpression.class, name = "and"),
+    @JsonSubTypes.Type(value = OrExpression.class, name = "or"),
+    @JsonSubTypes.Type(value = Condition.class, name = "condition")
+})
+public interface FilterExpression {
+}
+
+public class AndExpression implements FilterExpression {
+    private String type; // "and"
+    private List<FilterExpression> expressions;
+
+    // getters and setters
+}
+
+public class OrExpression implements FilterExpression {
+    private String type; // "or"
+    private List<FilterExpression> expressions;
+
+    // getters and setters
+}
+
+public class Condition implements FilterExpression {
+    private String type = "condition"; // or omit this if not needed
+    private String field;
+    private String operator; // "eq", "contains", etc.
+    private String value;
+
+    // getters and setters
+}
+
+
+@Service
+public class DocumentSearchService {
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    public List<DocumentDto> search(FilterExpression expression) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Document> cq = cb.createQuery(Document.class);
+        Root<Document> root = cq.from(Document.class);
+
+        Predicate predicate = buildPredicate(cb, root, expression);
+        cq.where(predicate);
+
+        List<Document> results = entityManager.createQuery(cq).getResultList();
+        return results.stream()
+                      .map(doc -> new DocumentDto(doc.getId(), doc.getName()))
+                      .toList();
+    }
+
+    private Predicate buildPredicate(CriteriaBuilder cb, Root<Document> root, FilterExpression expression) {
+        if (expression instanceof AndExpression andExpr) {
+            return cb.and(andExpr.getExpressions().stream()
+                .map(e -> buildPredicate(cb, root, e))
+                .toArray(Predicate[]::new));
+        } else if (expression instanceof OrExpression orExpr) {
+            return cb.or(orExpr.getExpressions().stream()
+                .map(e -> buildPredicate(cb, root, e))
+                .toArray(Predicate[]::new));
+        } else if (expression instanceof Condition cond) {
+            Path<String> path = resolvePath(root, cond.getField());
+            return switch (cond.getOperator()) {
+                case "eq" -> cb.equal(path, cond.getValue());
+                case "contains" -> cb.like(path, "%" + cond.getValue() + "%");
+                default -> throw new UnsupportedOperationException("Unknown operator: " + cond.getOperator());
+            };
+        }
+        throw new IllegalArgumentException("Unknown expression type");
+    }
+
+    private Path<String> resolvePath(Root<Document> root, String field) {
+        if (field.contains(".")) {
+            String[] parts = field.split("\\.");
+            Path<?> path = root.get(parts[0]);
+            for (int i = 1; i < parts.length; i++) {
+                path = path.get(parts[i]);
+            }
+            return (Path<String>) path;
+        } else {
+            return root.get(field);
+        }
+    }
+}
+
+
+
+
+
+
+
+
