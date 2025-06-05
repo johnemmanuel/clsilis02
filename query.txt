@@ -1,0 +1,117 @@
+public Message buildSegment(CanonicalHL7 model, Message parentMessage) throws HL7Exception {
+    logger.debug("Building ORC segment");
+    System.out.println("\n\n");
+    System.out.println(model.toString());
+    System.out.println();
+    ORU_R01 m = (ORU_R01) parentMessage;
+
+    Set<String> orderCache = new HashSet<>();
+    Set<String> requestCache = new HashSet<>();
+
+    List<Order> orders = model.getOrders();
+    int orderCount = orders.size();
+    for (int orderIndex = 0; orderIndex < orderCount; orderIndex++) {
+      Order order = orders.get(orderIndex);
+      String orderId = order.getIdentifyingKey();
+
+      ORU_R01_ORDER_OBSERVATION orderObservation =
+          m.getPATIENT_RESULT()
+              .insertORDER_OBSERVATION(m.getPATIENT_RESULT().getORDER_OBSERVATIONReps());
+
+      // we don't want to create ORC multiple times for the same order
+      ORC orc = orderObservation.getORC();
+
+      orc.getOrderControl().setValue(order.getOrderControl());
+      orc.getFillerOrderNumber().getNamespaceID().setValue(order.getFillerOrderNumber());
+      orc.getOrderingProvider(0).getIDNumber().setValue(order.getOrderingProviderId());
+      orc.getEntererSLocation()
+          .getFacility()
+          .getNamespaceID()
+          .setValue(order.getEnterersLocation());
+      orc.getOrderingFacilityName(0)
+          .getOrganizationName()
+          .setValue(order.getOrderingFacilityName());
+      orc.getOrderingProviderAddress(0)
+          .getStateOrProvince()
+          .setValue(order.getFacilityAddressState());
+      orc.getOrderingProviderAddress(0)
+          .getZipOrPostalCode()
+          .setValue(order.getFacilityAddressZip());
+      orc.getPlacerOrderNumber().getNamespaceID().setValue(order.getPlacerGroupNumber());
+
+      List<ObservationRequest> requests = order.getRequests();
+      int requestCount = requests.size();
+      for (int requestIndex = 0; requestIndex < requestCount; requestIndex++) {
+        ObservationRequest request = requests.get(requestIndex);
+        String requestId = request.getIdentifyingKey();
+
+        OBR obr = orderObservation.getOBR();
+
+        // populate request
+        obr.getSetIDOBR().setValue(String.valueOf(requestIndex+1));
+        obr.getPlacerOrderNumber().getNamespaceID().setValue(request.getPlacerOrderNumber());
+        obr.getUniversalServiceIdentifier().getText().setValue(request.getTestName());
+        obr.getUniversalServiceIdentifier()
+            .getAlternateIdentifier()
+            .setValue(request.getAlternativeIdentifier());
+        obr.getUniversalServiceIdentifier().getIdentifier().setValue(request.getLocalCode());
+        obr.getUniversalServiceIdentifier().getAlternateText().setValue(request.getAlternateText());
+        obr.getObservationDateTime().getTime().setValue(request.getObservationDateTime());
+        // DOUBT: What if there are multiple specimens. We are defaulting to a single. Should we
+        // have a field in OBR
+        obr.getSpecimenReceivedDateTime()
+            .getTime()
+            .setValue(request.getSpecimens().get(0).getReceivedDateTime());
+        obr.getFillerField1().setValue(request.getFillerField1());
+        obr.getResultsRptStatusChngDateTime()
+            .getTime()
+            .setValue(request.getResultsRptStatusChngDateTime());
+        obr.getRelevantClinicalInformation().setValue(request.getOrderingProviderSpecialty());
+        obr.getReasonForStudy(0).getIdentifier().setValue(request.getReasonForStudy());
+
+        List<ObservationResult> results = request.getResults();
+        int resultCount = results.size();
+        for (int resultIndex = 0; resultIndex < resultCount; resultIndex++) {
+          ObservationResult result = results.get(resultIndex);
+          System.out.println("Processing result: " + result.getIdentifyingKey());
+          System.out.println("Observation Reps: " + orderObservation.getOBSERVATIONReps());
+          ORU_R01_OBSERVATION observation =
+              orderObservation.insertOBSERVATION(orderObservation.getOBSERVATIONReps());
+
+          OBX obx = observation.getOBX();
+
+          obx.getSetIDOBX().setValue(String.valueOf(resultIndex + 1));
+          obx.getValueType().setValue(result.getValueType());
+          obx.getObservationIdentifier()
+              .getIdentifier()
+              .setValue(result.getObservationIdentifier());
+          obx.getObservationIdentifier().getText().setValue(result.getText());
+          obx.getObservationIdentifier()
+              .getAlternateIdentifier()
+              .setValue(result.getAlternateIdentifier());
+          obx.getObservationValue(0).getData().parse(result.getObservationValue(0));
+          obx.getUnits().getIdentifier().setValue(result.getUnitsIdentifier());
+          obx.getUnits().getText().setValue(result.getUnitsText());
+          obx.getUnits().getNameOfCodingSystem().setValue(result.getUnitsNameOfCodingSystem());
+          obx.getReferencesRange().setValue(result.getReferenceRange());
+          obx.getDateTimeOfTheObservation().getTime().setValue(result.getObservationDateTime());
+          obx.getProducerSReference().getIdentifier().setValue(result.getProducersID());
+          obx.getUserDefinedAccessChecks().setValue(result.getUserDefinedAccessChecks());
+
+          System.out.println("Result Index: " + resultIndex);
+          System.out.println("OBSERVATION Count: " + orderObservation.getOBSERVATIONReps());
+          System.out.println("Current OBX Data: " + obx.getUserDefinedAccessChecks().getValue());
+
+          List<Note> notes = result.getNotes();
+          int noteCount = notes.size();
+          for (int noteIndex = 0; noteIndex < noteCount; noteIndex++) {
+            NTE nte = observation.getNTE(observation.getNTEReps());
+            nte.getComment(0).setValue(" ");
+            nte.getSourceOfComment().setValue(" ");
+          }
+        }
+      }
+    }
+
+    return parentMessage;
+  }
