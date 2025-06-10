@@ -1,0 +1,47 @@
+# NETWORK SETTINGS
+TCPSocket 3310
+TCPAddr 127.0.0.1
+
+# PERFORMANCE SETTINGS
+MaxThreads 10
+MaxQueue 200
+
+# FILE SIZE LIMITS
+StreamMaxLength 100M
+MaxFileSize 100M
+MaxScanSize 200M
+
+# SCAN OPTIONS
+ScanPE yes
+ScanELF yes
+ScanOLE2 yes
+OLE2BlockMacros no
+ScanPDF yes
+ScanHTML yes
+ScanMail yes
+ScanArchive yes
+
+# ARCHIVE HANDLING
+ArchiveBlockEncrypted no
+MaxRecursion 16
+MaxFiles 10000
+
+# LOGGING
+LogFile /var/log/clamav/clamd.log
+LogTime yes
+LogClean no
+LogSyslog yes
+LogVerbose yes
+
+# USER
+User clamav
+
+# SECURITY OPTIONS
+AllowSupplementaryGroups yes
+DetectPUA no
+ExitOnOOM yes
+
+# SOCKET TIMEOUTS
+ReadTimeout 120
+CommandReadTimeout 60
+IdleTimeout 30
