@@ -1,0 +1,315 @@
+https://stackoverflow.com/questions/39371037/how-change-limit-file-size-of-clamd-service-for-nclam
+
+public class TcpConnection {
+    private final Socket socket;
+    private final OutputStream out;
+    private final InputStream in;
+
+    public TcpConnection(String host, int port) throws IOException {
+        this.socket = new Socket(host, port);
+        this.out = socket.getOutputStream();
+        this.in = socket.getInputStream();
+    }
+
+    public OutputStream getOutputStream() {
+        return out;
+    }
+
+    public InputStream getInputStream() {
+        return in;
+    }
+
+    public boolean isValid() {
+        return socket != null && socket.isConnected() && !socket.isClosed();
+    }
+
+    public void close() {
+        try {
+            socket.close();
+        } catch (IOException ignored) {
+        }
+    }
+}
+
+
+import java.io.IOException;
+import java.util.concurrent.*;
+
+public class TcpConnectionPool {
+    private final BlockingQueue<TcpConnection> pool;
+    private final String host;
+    private final int port;
+    private final int maxPoolSize;
+
+    public TcpConnectionPool(String host, int port, int maxPoolSize) {
+        this.host = host;
+        this.port = port;
+        this.maxPoolSize = maxPoolSize;
+        this.pool = new LinkedBlockingQueue<>(maxPoolSize);
+    }
+
+    public TcpConnection borrowConnection() throws IOException {
+        TcpConnection conn = pool.poll();
+        if (conn == null || !conn.isValid()) {
+            conn = new TcpConnection(host, port);
+        }
+        return conn;
+    }
+
+    public void returnConnection(TcpConnection conn) {
+        if (conn != null && conn.isValid() && pool.size() < maxPoolSize) {
+            pool.offer(conn);
+        } else {
+            conn.close();
+        }
+    }
+
+    public void shutdown() {
+        for (TcpConnection conn : pool) {
+            conn.close();
+        }
+        pool.clear();
+    }
+}
+
+
+public class ClamAvScannerService {
+
+    private final TcpConnectionPool pool = new TcpConnectionPool("localhost", 3310, 10);
+
+    public boolean scan(byte[] data) {
+        TcpConnection conn = null;
+        try {
+            conn = pool.borrowConnection();
+            OutputStream out = conn.getOutputStream();
+            InputStream in = conn.getInputStream();
+
+            out.write("zINSTREAM\0".getBytes());
+            out.write(data);
+            out.write(new byte[] { 0, 0, 0, 0 }); // EOF
+            out.flush();
+
+            byte[] buffer = new byte[1024];
+            int read = in.read(buffer);
+            String response = new String(buffer, 0, read);
+            return !response.contains("FOUND");
+
+        } catch (IOException e) {
+            // Log and retry logic if needed
+            return false;
+        } finally {
+            pool.returnConnection(conn);
+        }
+    }
+}
+
+
+<dependency>
+  <groupId>org.apache.commons</groupId>
+  <artifactId>commons-pool2</artifactId>
+  <version>2.12.0</version>
+</dependency>
+
+
+public class TcpConnectionFactory extends BasePooledObjectFactory<TcpConnection> {
+    private final String host;
+    private final int port;
+
+    public TcpConnectionFactory(String host, int port) {
+        this.host = host;
+        this.port = port;
+    }
+
+    @Override
+    public TcpConnection create() throws Exception {
+        return new TcpConnection(host, port);
+    }
+
+    @Override
+    public PooledObject<TcpConnection> wrap(TcpConnection conn) {
+        return new DefaultPooledObject<>(conn);
+    }
+
+    @Override
+    public boolean validateObject(PooledObject<TcpConnection> p) {
+        return p.getObject().isValid();
+    }
+
+    @Override
+    public void destroyObject(PooledObject<TcpConnection> p) {
+        p.getObject().close();
+    }
+}
+
+// Usage
+GenericObjectPool<TcpConnection> pool = new GenericObjectPool<>(new TcpConnectionFactory("localhost", 3310));
+
+
+
+
+
+==================================
+
+import java.io.IOException;
+import java.net.Socket;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.locks.ReentrantLock;
+
+public class ClamAVConnectionPool {
+    private final String host;
+    private final int port;
+    private final int maxPoolSize;
+    private final BlockingQueue<Socket> availableConnections;
+    private final ReentrantLock lock = new ReentrantLock();
+    private int createdConnections = 0;
+
+    public ClamAVConnectionPool(String host, int port, int maxPoolSize) {
+        this.host = host;
+        this.port = port;
+        this.maxPoolSize = maxPoolSize;
+        this.availableConnections = new LinkedBlockingQueue<>(maxPoolSize);
+    }
+
+    public Socket borrowConnection() throws IOException, InterruptedException {
+        Socket socket = availableConnections.poll(); // Try to get an idle connection
+        if (socket != null && !socket.isConnected()) {
+            socket.close(); // Discard broken connection
+            socket = null;
+        }
+
+        if (socket == null) {
+            lock.lock();
+            try {
+                if (createdConnections < maxPoolSize) {
+                    socket = new Socket(host, port);
+                    createdConnections++;
+                }
+            } finally {
+                lock.unlock();
+            }
+
+            if (socket == null) {
+                // Wait for a connection to become available
+                socket = availableConnections.take();
+            }
+        }
+        return socket;
+    }
+
+    public void returnConnection(Socket socket) {
+        if (socket != null && socket.isConnected()) {
+            availableConnections.offer(socket); // Return to pool if healthy
+        } else {
+            try {
+                if (socket != null) socket.close();
+            } catch (IOException ignored) {}
+            lock.lock();
+            try {
+                createdConnections--;
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    public void closePool() {
+        availableConnections.forEach(socket -> {
+            try {
+                socket.close();
+            } catch (IOException ignored) {}
+        });
+        availableConnections.clear();
+        lock.lock();
+        try {
+            createdConnections = 0;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+
+public class ClamAVScanner {
+    private static final ClamAVConnectionPool pool = new ClamAVConnectionPool("localhost", 3310, 20);
+
+    public String scanFile(byte[] fileData) throws IOException, InterruptedException {
+        Socket socket = null;
+        try {
+            socket = pool.borrowConnection();
+            OutputStream out = socket.getOutputStream();
+            InputStream in = socket.getInputStream();
+
+            // Send SCAN command
+            out.write("zINSTREAM\0".getBytes());
+            out.flush();
+
+            // Send file in chunks
+            out.write(fileData);
+            out.write(new byte[]{0, 0, 0, 0}); // EOF marker
+            out.flush();
+
+            // Read response
+            byte[] response = new byte[1024];
+            int bytesRead = in.read(response);
+            return new String(response, 0, bytesRead);
+        } finally {
+            if (socket != null) {
+                pool.returnConnection(socket);
+            }
+        }
+    }
+}
+
+<dependency>
+    <groupId>org.apache.commons</groupId>
+    <artifactId>commons-pool2</artifactId>
+    <version>2.11.1</version>
+</dependency>
+
+import org.apache.commons.pool2.impl.GenericObjectPool;
+import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
+
+public class ClamAVPoolFactory extends BasePooledObjectFactory<Socket> {
+    private final String host;
+    private final int port;
+
+    public ClamAVPoolFactory(String host, int port) {
+        this.host = host;
+        this.port = port;
+    }
+
+    @Override
+    public Socket create() throws Exception {
+        return new Socket(host, port);
+    }
+
+    @Override
+    public PooledObject<Socket> wrap(Socket socket) {
+        return new DefaultPooledObject<>(socket);
+    }
+
+    @Override
+    public boolean validateObject(PooledObject<Socket> pooledSocket) {
+        return pooledSocket.getObject().isConnected();
+    }
+
+    @Override
+    public void destroyObject(PooledObject<Socket> pooledSocket) throws Exception {
+        pooledSocket.getObject().close();
+    }
+}
+
+// Usage
+GenericObjectPoolConfig<Socket> config = new GenericObjectPoolConfig<>();
+config.setMaxTotal(20); // Max connections
+config.setTestOnBorrow(true); // Validate before use
+
+GenericObjectPool<Socket> pool = new GenericObjectPool<>(new ClamAVPoolFactory("localhost", 3310), config);
+
+// Borrow & return
+try (Socket socket = pool.borrowObject()) {
+    // Use socket
+} catch (Exception e) {
+    e.printStackTrace();
+}
+
