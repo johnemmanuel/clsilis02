@@ -1,0 +1,56 @@
+# ======================
+# Core Configuration
+# ======================
+LogFile /var/log/clamav/clamd.log
+LogTime yes
+LogClean yes
+LogVerbose no
+PidFile /var/run/clamav/clamd.pid
+DatabaseDirectory /var/lib/clamav
+LocalSocket /var/run/clamav/clamd.ctl
+FixStaleSocket yes
+User clamav
+AllowSupplementaryGroups yes
+
+# ======================
+# Performance Tuning
+# ======================
+MaxThreads 50                     # Increase worker threads (default: 10)
+MaxConnectionQueueLength 500       # Larger backlog for burst traffic
+StreamMaxLength 60M               # Slightly >50MB to avoid truncation
+MaxScanSize 60M                   # Max file size to scan
+MaxFileSize 60M                   # Max file size to check
+MaxRecursion 16                   # For nested archives (docx, xlsx, etc.)
+MaxFiles 10000                    # Max files per scan (for archives)
+MaxEmbeddedPE 60M                 # For PE files inside archives
+MaxHTMLNormalize 60M              # For HTML/JS normalization
+MaxScriptNormalize 60M            # For scripts (JS, VBS)
+MaxZipTypeRcg 60M                 # For Zip bombs
+ScanPE yes                        # Scan Portable Executables
+ScanELF yes                       # Scan ELF binaries
+ScanOLE2 yes                      # For Office docs (docx, xlsx)
+ScanPDF yes                       # For PDFs
+ScanSWF yes                       # For Flash (unlikely, but safe)
+ScanArchive yes                   # Enable archive scanning
+ArchiveBlockEncrypted no          # Allow encrypted files (trade-off)
+
+# ======================
+# On-Access Scanning (Disable for Performance)
+# ======================
+OnAccessIncludePath /
+OnAccessPrevention yes            # Disable if not needed (slows scans)
+OnAccessExcludeUname clamav       # Avoid recursive scans
+
+# ======================
+# Advanced Optimizations
+# ======================
+Bytecode yes                      # Enable bytecode detection
+BytecodeSecurity TrustSigned      # Trust signed bytecode
+BytecodeTimeout 60000             # Timeout (ms) for bytecode scans
+AlgorithmicDetection yes          # Heuristic analysis
+CrossFilesystems yes              # Scan mounted drives (if needed)
+DetectBrokenExecutables yes       # Check corrupt binaries
+PhishingSignatures yes            # Detect phishing in HTML/PDFs
+PhishingScanURLs yes              # Check embedded URLs
+PartitionIntersection no          # Disable for speed
+BlockMax yes                      # Block max-size files early
