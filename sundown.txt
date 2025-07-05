@@ -1,0 +1,177 @@
+There is a legacy project that manages lab test orders. It was developed in PHP. It is also integrated with at least 6 other systems through a REST interface. Its UI is in React 16. The product team wants to phase this out and bring in a new version that will fix/enhance existing workflows and also be up to date with new tech so that the existing tech debt is cleared. According to them the database schema also has a lot of tech debt and needs an overhaul or complete rewrite. They are inclined toward Mendix as the platform of choice to take this forward. The Architecture team is however wary of low/no code platforms as they are ok to start with but in the longer run create more problems that they solve. I have to present a solution that is correct for the company and is the way forward. Please suggest content for a deck that I can present with solutions and different ways this can be solved. Please provide solutions too. 
+
+Existing Challenges:
+
+Difficult to extend and maintain
+Outdated PHP stack and React version
+Poor schema design: tight coupling, lack of normalization, performance issues
+Integration challenges (fragile REST endpoints)
+Developer onboarding friction
+Accumulated tech debt slowing product delivery
+
+Business Goals for the New Platform
+
+Enhance and streamline workflows
+Reduce time-to-market for new features
+Enable scalability and maintainability
+Modern UI/UX
+Reduce tech debt, re-architect database
+Improve integration reliability and flexibility
+Align with future enterprise architecture direction
+
+Option 1 – Mendix (Low-Code)
+✅ Pros:
+
+Fast prototyping and delivery
+Visual modeling for workflows
+Good for simple CRUD-heavy use cases
+Built-in integrations, auth, UI components
+Non-developers can contribute
+
+🚫 Cons:
+
+Long-term lock-in
+Costly licensing model
+Limited flexibility for complex logic
+DevOps and testing limitations
+Debugging and troubleshooting harder
+Difficult to onboard full-stack engineers
+Vendor dependency
+
+Best For:
+
+Simple business workflows
+Back-office automation
+Teams lacking engineering capacity
+
+
+Option 2 – Full Custom Rebuild
+Tech Stack Recommendation:
+
+Backend: Spring Boot / Quarkus / Micronaut (Java/Kotlin)
+Frontend: React 18 or Angular (with component libraries)
+Database: PostgreSQL / MySQL (redesigned schema)
+Integration: REST/GraphQL or async via Kafka, gRPC, etc.
+
+✅ Pros:
+
+Full flexibility for complex logic
+Easier to scale and optimize
+Can be CI/CD and DevOps-ready
+Rich ecosystem for testing, monitoring
+Easier hiring and long-term maintenance
+Can support microservices, domain-driven design (DDD)
+
+🚫 Cons:
+
+Higher initial cost and dev time
+Requires experienced engineers
+Slower initial delivery
+
+Best For:
+
+Complex, domain-rich systems
+Long-term investment
+Systems with custom workflows, logic, and integrations
+
+
+Integration Strategy for All Options
+
+Use OpenAPI-first design for all new services
+Migrate existing REST endpoints to versioned, documented APIs
+Use API Gateway (e.g., Kong, Apigee) to manage and abstract endpoints
+Introduce event-based communication for reliability (Kafka/RabbitMQ)
+Design for backward compatibility and graceful degradation
+
+🗃️ Slide 8: Database Modernization
+
+Redesign schema using modular, normalized, and scalable design
+Use flyway/liquibase for versioned DB migrations
+Support historical data migration and archiving
+Plan for data access APIs, not direct queries from UI or external systems
+Add observability and backup strategy
+
+
+Recommendation
+Preferred Approach: Full Custom Build with a Clean Architecture
+
+Aligns with enterprise architecture strategy
+Better long-term ROI
+Avoids vendor lock-in
+Fully testable, observable, maintainable
+Cloud-agnostic, DevOps-friendly
+Enables future AI/data/analytics use cases
+Optional: Use Low-Code (Mendix) for admin portals ONLY
+
+Suggested Phased Rollout Plan
+
+Phase 1: Foundation
+
+Finalize tech stack, architecture patterns, database design
+Design REST + async integration strategy
+
+Phase 2: MVP Build
+
+Core order workflow + 1-2 integration flows
+UI with React 18 or Angular + Tailwind/Material
+
+Phase 3: Migration
+
+Gradually decommission PHP modules
+Use Strangler Fig Pattern to wrap and replace old services
+
+Phase 4: Expansion
+
+Add remaining flows, reports, dashboards
+Enable analytics, monitoring, and AI-readiness
+
+
+
+Data Migration Plan
+
+Spring Batch, Flyway, Apache Camel, dbt, or custom scripts
+
+Migration Plan
+
+Phase |	Activity
+Prototype Migration	| Pick a small sample (1-5%) and test mappings
+Automated ETL Scripts |	Use tools like Spring Batch, Flyway, Apache Camel, dbt, or custom scripts
+Validation Framework |	Row counts, referential integrity, business rule assertions
+Dual-Write (Optional) |	Legacy + New system temporarily accept writes (if going live in phases)
+Dry Run + Sign-Off |	Full volume trial migration with stakeholder testing
+Cutover or Parallel Run |	Final migration & switchover, or run in parallel for a while
+
+Change data capture
+
+Data Synchronization for Transition Period
+If systems must co-exist temporarily:
+
+Use Change Data Capture (CDC) (Debezium, GoldenGate, etc.)
+Mirror critical writes from old → new DB using middleware
+Build sync adapters if direct DB access is not allowed
+
+Compliance and Security
+
+Ensure PII and PHI are encrypted and migrated securely
+Review with security and compliance teams
+Consider data lineage tracking for audits
+
+Risks & Mitigations
+Risk |	Mitigation
+Dirty/invalid legacy data |	Pre-migration validation + cleansing
+Downtime during migration |	Use parallel run or weekend cutover
+Missing business rules in new schema |	Involve domain SMEs in mapping
+Dependency on legacy IDs |	Map legacy IDs in a translation table
+System integrations breaking |	Maintain compatibility layer until fully transitioned
+
+Recommendations
+
+Use a phased migration strategy aligned with application rollout:
+Don’t migrate all data blindly
+Archive legacy data not required for daily ops
+Build confidence with prototypes and dry runs
+Automate the ETL and validation process
+
+
+Schema Design
+Data Migration
