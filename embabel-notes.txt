@@ -1,0 +1,463 @@
+## Default LLM and Ranking LLM Configuration
+
+embabel:
+  models:
+    defaultLlm: gpt-4.1
+  agent-platform:
+    ranking:
+      llm: gpt-4.1-mini
+
+## Ollama Configuration
+
+spring:
+  profiles:
+    active: shell,ollama
+
+embabel:
+  models:
+    defaultLlm: my-custom-model
+  agent-platform:
+    ranking:
+      llm: my-custom-model
+
+# Optional: Ollama or other provider config if using local models
+# spring:
+#   ai:
+#     ollama:
+#       base-url: http://localhost:11434
+
+
+## Customizing Routing
+
+Option A – Provide Strong Agent Descriptions
+
+@Agent(description = "Handles lab test interpretation and explanations of lab results")
+public class LabResultsAgent { ... }
+
+Option B – Rule-Based Routing
+
+@Component
+public class DiagnosticRouter {
+
+    private final LabResultsAgent labAgent;
+    private final ImagingAgent imagingAgent;
+    private final PathologyAgent pathologyAgent;
+
+    public DiagnosticRouter(LabResultsAgent labAgent,
+                            ImagingAgent imagingAgent,
+                            PathologyAgent pathologyAgent) {
+        this.labAgent = labAgent;
+        this.imagingAgent = imagingAgent;
+        this.pathologyAgent = pathologyAgent;
+    }
+
+    public Object route(String query) {
+        if (query.contains("blood") || query.contains("lab")) {
+            return labAgent.interpretLabResults(query);
+        } else if (query.contains("CT") || query.contains("MRI")) {
+            return imagingAgent.explainImaging(query);
+        } else if (query.contains("biopsy") || query.contains("pathology")) {
+            return pathologyAgent.handlePathology(query);
+        }
+        // fallback to a general agent
+        return "Sorry, I don't know which specialist to route to.";
+    }
+}
+
+
+Option C – Hybrid
+
+- First apply simple keyword/domain detection (fast + deterministic).
+- If it’s ambiguous, fall back to the LLM-based ranking.
+
+## Configuring Bedrock
+
+spring:
+  ai:
+    providers:
+      bedrock:
+        region: us-east-1
+        # Optional: Use AWS profile from credentials file
+        profile: bedrock
+        # Or directly inline AWS keys (not recommended publicly)
+        # accessKeyId: ${AWS_ACCESS_KEY_ID}
+        # secretAccessKey: ${AWS_SECRET_ACCESS_KEY}
+
+    models:
+      - name: my-bedrock-model
+        provider: bedrock
+        model: <YOUR_BEDROCK_MODEL_ID>
+        roles:
+          - chat
+        defaultCompletionOptions:
+          promptCaching: true    # Optional: enable for Claude models
+
+
+## Configuring Custom Models
+
+models:
+  - name: custom-bedrock
+    provider: bedrockimport
+    model: <YOUR_CUSTOM_MODEL_ID>
+    env:
+      region: us-west-2
+      profile: bedrock
+      modelArn: arn:aws:bedrock:us-west-2:XXXXX:imported-model/XXXXXX
+
+
+Sample YAML configuration:
+
+spring:
+  ai:
+    providers:
+      bedrock:
+        region: us-east-1
+        profile: bedrock
+    models:
+      - name: my-bedrock-model
+        provider: bedrock
+        model: anthropic.claude-v1
+        roles:
+          - chat
+        defaultCompletionOptions:
+          promptCaching: true
+
+embabel:
+  models:
+    defaultLlm: my-bedrock-model
+  agent-platform:
+    ranking:
+      llm: my-bedrock-model
+
+
+## Hybrid Agent Selector
+
+import org.springframework.stereotype.Component;
+import org.embabel.platform.Agent;
+import org.embabel.platform.AgentSelector;
+import org.embabel.platform.AgentPlatform;
+
+import java.util.List;
+
+@Component
+public class HybridAgentSelector implements AgentSelector {
+
+    private final AgentSelector llmSelector; // delegate to Embabel's default
+    private final AgentPlatform agentPlatform;
+
+    public HybridAgentSelector(AgentSelector llmSelector, AgentPlatform agentPlatform) {
+        this.llmSelector = llmSelector;
+        this.agentPlatform = agentPlatform;
+    }
+
+    @Override
+    public Agent selectAgent(String query, List<Agent> availableAgents) {
+        // ---- Step 1: deterministic routing ----
+        if (query.toLowerCase().contains("blood") || query.contains("lab")) {
+            return findByName(availableAgents, "LabResultsAgent");
+        }
+        if (query.toLowerCase().contains("ct") || query.contains("mri")) {
+            return findByName(availableAgents, "ImagingAgent");
+        }
+        if (query.toLowerCase().contains("biopsy") || query.contains("pathology")) {
+            return findByName(availableAgents, "PathologyAgent");
+        }
+
+        // ---- Step 2: fallback to LLM routing ----
+        return llmSelector.selectAgent(query, availableAgents);
+    }
+
+    private Agent findByName(List<Agent> agents, String simpleName) {
+        return agents.stream()
+                     .filter(a -> a.getClass().getSimpleName().equals(simpleName))
+                     .findFirst()
+                     .orElse(null);
+    }
+}
+
+
+## Learning Path
+
+Suggested Learning Path Summary
+
+embabel-agent-api — core abstractions (actions/goals/DSL).
+embabel-agent-starter/autoconfigure — how Embabel wires up agents in Spring.
+Planner (GOAP) — see how planning and dynamic flow works.
+AgentPlatform / AgentSelector — understand agent routing and execution.
+MCP integration modules — enable interactive, tool-based workflows.
+embabel-agent-test — learn test patterns for agent logic.
+
+Examples repository — apply theory in real code.
+
+## Mocking an LLM in Unit Tests
+
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.chat.ChatResponse;
+import org.springframework.ai.chat.Generation;
+
+public class MockChatModel implements ChatModel {
+
+    @Override
+    public ChatResponse call(Prompt prompt) {
+        // Always return deterministic output for testing
+        return new ChatResponse(
+            List.of(new Generation("Mocked response for: " + prompt.getContents().toString()))
+        );
+    }
+}
+
+
+@TestConfiguration
+public class TestConfig {
+    @Bean
+    public ChatModel chatModel() {
+        return new MockChatModel();
+    }
+}
+
+
+## Using Bedrock
+
+// Hypothetical imports — adjust based on actual package names in your version of Embabel / Spring AI
+import com.embabel.agent.api.Agent;
+import com.embabel.agent.api.annotation.Action;
+import com.embabel.agent.api.annotation.AchievesGoal;
+import com.embabel.agent.platform.AgentPlatform;
+import com.embabel.agent.platform.ModelProvider;
+import com.embabel.agent.platform.LLM;  // or whatever the LLM / ChatModel interface is
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.util.Map;
+
+@Configuration
+public class BedrockConfig {
+
+    @Value("${bedrock.model.id}")
+    private String bedrockModelId;
+
+    @Value("${bedrock.credentials.secretName}")
+    private String secretName;
+
+    @Bean
+    public AwsCredentialsProvider bedrockCredentialsProvider() throws Exception {
+        // Use AWS Secrets Manager to load credentials
+        SecretsManagerClient smClient = SecretsManagerClient.create();
+        String secretJson = smClient.getSecretValue(
+            GetSecretValueRequest.builder().secretId(secretName).build()
+        ).secretString();
+
+        ObjectMapper mapper = new ObjectMapper();
+        Map<String, String> creds = mapper.readValue(secretJson, Map.class);
+        AwsBasicCredentials awsCreds = AwsBasicCredentials.create(
+            creds.get("accessKey"),
+            creds.get("secretKey")
+        );
+        return StaticCredentialsProvider.create(awsCreds);
+    }
+
+    @Bean
+    public LLM bedrockLlm(AwsCredentialsProvider credentialsProvider) {
+        // Hypothetical constructor / builder for a Bedrock-backed LLM in Embabel or Spring AI
+        return new com.embabel.agent.platform.BedrockLlm.Builder()
+            .modelId(bedrockModelId)
+            .credentialsProvider(credentialsProvider)
+            .build();
+    }
+
+    @Bean
+    public ModelProvider modelProvider(LLM bedrockLlm) {
+        // If Embabel needs a ModelProvider or similar to register & select LLMs
+        return new ModelProvider(/* perhaps naming, priority etc */ bedrockLlm);
+    }
+}
+
+
+import com.embabel.agent.api.annotation.Agent;
+import com.embabel.agent.api.annotation.Action;
+import com.embabel.agent.api.annotation.AchievesGoal;
+
+@Agent(name = "DiagnosticAgent", description = "Handle diagnostic domain queries")
+public class DiagnosticAgent {
+
+    @Action
+    public String analyzeLabResults(String input) {
+        // use prompt via Embabel PromptRunner etc.
+        // e.g. something like:
+        return com.embabel.agent.api.PromptRunner
+                 .usingLlm()   // uses default or configured LLM
+                 .withPrompt("Interpret lab results: " + input)
+                 .create(String.class);
+    }
+
+    @AchievesGoal(description = "Diagnosis Complete")
+    @Action
+    public String formulateDiagnosis(String labAnalysis) {
+        return com.embabel.agent.api.PromptRunner
+                 .usingLlm()
+                 .withPrompt("Based on analysis: " + labAnalysis + ", what is the likely diagnosis?")
+                 .create(String.class);
+    }
+}
+
+
+bedrock:
+  model:
+    id: "anthropic.claude-v2"       # example Bedrock model
+  credentials:
+    secretName: "my/bedrock/credentials-secret"
+
+embabel:
+  models:
+    default-llm: "bedrock:anthropic.claude-v2"
+  agent-platform:
+    ranking:
+      llm: "bedrock:anthropic.claude-v2"
+
+
+package com.yourorg.embabel.config;
+
+import com.embabel.agent.api.Llm;  // hypothetical interface for LLM in Embabel
+import com.embabel.agent.api.ModelProvider;  // or whatever the model registration class is
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.util.Map;
+
+@Configuration
+public class BedrockLlmConfig {
+
+    @Value("${bedrock.secretName}")
+    private String secretName;
+
+    @Value("${bedrock.modelId}")
+    private String modelId;
+
+    @Bean
+    public AwsCredentialsProvider bedrockCredentialsProvider() throws Exception {
+        SecretsManagerClient sm = SecretsManagerClient.create();
+        String secretJson = sm.getSecretValue(
+            GetSecretValueRequest.builder()
+                .secretId(secretName)
+                .build()
+        ).secretString();
+
+        ObjectMapper mapper = new ObjectMapper();
+        Map<String, String> creds = mapper.readValue(secretJson, Map.class);
+        String accessKey = creds.get("accessKey");
+        String secretKey = creds.get("secretKey");
+        AwsBasicCredentials awsCreds = AwsBasicCredentials.create(accessKey, secretKey);
+        return StaticCredentialsProvider.create(awsCreds);
+    }
+
+    @Bean
+    public Llm bedrockLlm(AwsCredentialsProvider credentialsProvider) {
+        // Note: you need to check what class in your Embabel version implements LLM for Bedrock
+        return new com.embabel.agent.api.impl.BedrockLlm(  // hypothetical fully qualified class name
+            modelId,
+            credentialsProvider
+        );
+    }
+
+    // If Embabel requires you to register LLMs or give them a name / alias so you can refer to them in agent code/config
+    @Bean
+    public ModelProvider bedrockModelProvider(Llm bedrockLlm) {
+        return new ModelProvider("bedrock-" + modelId, bedrockLlm);
+    }
+}
+
+
+import com.embabel.agent.api.Agent;
+import com.embabel.agent.api.annotation.Action;
+import com.embabel.agent.api.annotation.Goal;
+import com.embabel.agent.api.OperationContext;
+
+@Agent(description = "Diagnostic Agent using Bedrock")
+public class DiagnosticAgent {
+
+    @Action
+    public String interpret(String input, OperationContext context) {
+        // Use the Bedrock LLM via context.ai().withLlm(...) or the default if your config sets this LLM as default
+        return context.ai()
+                      .withLlm("bedrock:anthropic.claude-v2")  // use alias you registered
+                      .create(String.format("Interpret diagnostic data: %s", input), String.class);
+    }
+}
+
+
+context.ai()
+       .withDefaultLlm()
+       .create("Some prompt …", String.class);
+
+
+@Agent(name = "SupportAgent", description = "Agent for customer support tasks")
+public class SupportAgent {
+
+    @Goal(description = "Answer product related questions")
+    public String answerQuestion(String query, OperationContext ctx) {
+        return "Support: " + query;
+    }
+}
+
+@Agent(name = "OrderAgent", description = "Agent for order management tasks")
+public class OrderAgent {
+
+    @Goal(description = "Track and update orders")
+    public String handleOrder(String query, OperationContext ctx) {
+        return "Order: " + query;
+    }
+}
+
+
+import com.embabel.agent.api.runtime.AgentRuntime;
+import com.embabel.agent.api.runtime.OperationContext;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+@Service
+public class AgentInvoker {
+
+    private final AgentRuntime agentRuntime;
+
+    @Autowired
+    public AgentInvoker(AgentRuntime agentRuntime) {
+        this.agentRuntime = agentRuntime;
+    }
+
+    public String runSupportAgent(String userQuery) {
+        OperationContext ctx = agentRuntime.newContext()
+                .withAgent("SupportAgent"); // 👈 explicitly bind agent
+
+        return ctx.ai()
+                  .withGoal("Answer product related questions")
+                  .run(userQuery, String.class);
+    }
+
+    public String runOrderAgent(String userQuery) {
+        OperationContext ctx = agentRuntime.newContext()
+                .withAgent("OrderAgent"); // 👈 explicitly bind agent
+
+        return ctx.ai()
+                  .withGoal("Track and update orders")
+                  .run(userQuery, String.class);
+    }
+}
+
+
