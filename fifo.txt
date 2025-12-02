@@ -1,0 +1,79 @@
+I am working on the design for a software system that will receive diagnostic order messages from external systems, process them (validate, enrich, route) and deliver them to internal systems (LIS/Labs). The volume of orders is about 12 messages per second so it needs to be highly performant. Obviously we need all the features of an enterprise system - fault tolerance, low latency, high throughput etc. The most critical feature here is to maintain message FIFO.
+
+To ensure we have both performance and maintain FIFO, I came up with the approach of generating a sequence number for each message on ingest and move them through multiple stages of processing instances (multiple instances per stage). Finally before delivery, I have a delivery coordinator and a watchdog - services that will ensure FIFO delivery.
+
+Both services work in the following way to ensure FIFO - 
+
+There are 2 db tables for this:
+
+message_tracking
+PK: message_id: UUID
+interface_id: UUID
+sequence_no: BIGINT
+status: ENUM
+
+UNIQUE(interface_id, sequence_no)
+
+The above table is used to track message status / stage it is in or completed
+
+message_delivery_checkpoint
+pk: interface_id: UUID
+last_delivered_sequence: BIGINT
+
+The above table is used to ensure FIFO per interface. last_delivered_sequence tells the message that was last delivered/failed.
+
+If there is a failure at any stage, the message is pushed to DLQ. Watchdog receives the message and updates it status in message_tracking table to FAILED.
+
+When delivery service (which could have many instances running) receives a message, it will compare the message sequence to the last_delivered_sequence. If the message sequence is last_delivered_sequence + 1, we deliver it. Else we NACK it. 2 scenarios listed below:
+
+1. last_delivered_sequence is 0. messages with seq 1 and 2 failed. 
+In this case 3 will be waiting forever since 1 and 2 will never get to delivery service. So when delivery service receives 3 it will retrieve rows from message_tracking table with the condition that sequence_no is between last_delivered_sequence (0) and the current message seq (3). So we receive messages 1 & 2. delivery service checks for their status and if it is failed, updates the last_delivered counter by 1 for each message. Finally it decides whether the message message should be deliverd.
+
+2. last_delivered_sequence is 10. message 15 has failed.
+In this case watchdog set status of message 15 to failed. Delivery seq will start receiving messages between 10 and 15. At sometime they will get processed. 15 never arrives. 16 or 19 or 17 may be received by delivery service. At this point delivery service will do what was done in scenario 1 and update the last_delivered counter.
+
+I believe the approach will work. However, we have too may db reads. In this high volume system this will slow down the system. What are better alternatives/solutions. Ask questions for clarifications.
+
+
+
+
+
+1. per interface
+2. seconds
+3. Upstream will have to maintain FIFO. We cannot maintain FIFO if we don't receive it that way.
+4. 25000+
+5. Postgres is what I am proposing. This is a redesign of an existing system that uses Oracle Exacloud
+6. I am not allowed to use Kafka. It's why I am using JMS 
+7. I am maintaining FIFO only at the delivery stage. They are processed as received by each instance as they receive them
+8. There will be 3 retries post which they are moved to DLQ. I am incrementing even for failed messages since it will block later messages . Explain how we can implement skipping. Incrementing for failed messages is my way of skipping.
+
+
+
+
+-- Batch check: Get all undelivered sequences for an interface
+SELECT sequence_no, status 
+FROM message_tracking 
+WHERE interface_id = ? 
+  AND sequence_no > last_delivered_sequence
+  AND sequence_no <= ?
+ORDER BY sequence_no
+
+
+CREATE VIEW ready_for_delivery AS
+SELECT mt.* 
+FROM message_tracking mt
+LEFT JOIN message_delivery_checkpoint mdc ON mt.interface_id = mdc.interface_id
+WHERE mt.status = 'PROCESSED'
+  AND mt.sequence_no = mdc.last_delivered_sequence + 1
+  
+  
+  
+  
+  
+Key: delivery:{interface_id}
+Value: {
+  "next_expected": 123,
+  "failed_seqs": [124, 127],  # Sorted Set
+  "window_upper": 200,
+  "updated_at": 1634567890
+}
