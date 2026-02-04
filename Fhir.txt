@@ -1,0 +1,19 @@
+# fhir
+
+┌─────────────────────────────────────────────────┐
+│              Application Layer                   │
+├─────────────────────────────────────────────────┤
+│  Sync Service        │     Batch Job            │
+│  (2.5-3s SLA)        │  (Spring Batch)          │
+├─────────────────────────────────────────────────┤
+│           Framework Core                         │
+├───────────────┬─────────────────┬───────────────┤
+│   Readers     │  Mapping Engine │   Writers     │
+│ • CSV/TSV     │ • Rule Engine   │ • FHIR REST   │
+│ • JDBC        │ • Transformations│ • Files      │
+│ • Streaming   │ • References    │ • Queue       │
+├───────────────┴─────────────────┴───────────────┤
+│           FHIR Layer                            │
+│ • Version abstraction  • Validation             │
+│ • Profile validation   • Terminology service    │
+└─────────────────────────────────────────────────┘
